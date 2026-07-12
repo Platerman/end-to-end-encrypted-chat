@@ -1,50 +1,77 @@
 import socket
+import getpass
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from base64 import urlsafe_b64encode
 
-from util import generate_key, format_key
+from utils import send_msg, recv_msg, MAX_MESSAGE_SIZE
 
 
 def main():
     host = input('Host to connect: ').strip()
-    port = int(input('Port to connect: ').strip())
+    while True:
+        try:
+            port = int(input('Port to connect: ').strip())
+            break
+        except ValueError:
+            print('Invalid port, please enter a number.')
 
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((host, port))
-
-    common = generate_key()
-    secret = generate_key()
-    public = common + secret
-
-    # sending common key to server
-    sock.send(str(common).encode())
-
-    # getting public key from peer and sending own key
-    public_peer = int(sock.recv(1024).decode())
-    sock.send(str(public).encode())
-
-    message_secret = secret + public_peer
-    print(f'- Encrypt key is: {format_key(message_secret)}')
-
-    key_bytes = message_secret.to_bytes(32, byteorder='little')
-    fernet = Fernet(urlsafe_b64encode(key_bytes))
-
-    print('=' * 20)
-
+    sock = None
     try:
-        while True:        
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((host, port))
+
+        # Pre-shared key: ask for password
+        shared_password = ''
+        while not shared_password:
+            shared_password = getpass.getpass('Enter shared password: ').strip()
+            if not shared_password:
+                print('Password cannot be empty.')
+        # Derive a 32-byte key using HKDF
+        hkdf = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=b'chat-key',
+        )
+        key = hkdf.derive(shared_password.encode())
+        fernet = Fernet(urlsafe_b64encode(key), ttl=None)
+        print('- Key derived successfully.')
+
+        print('=' * 20)
+
+        while True:
             message = input('message> ').strip()
             encrypted_msg = fernet.encrypt(message.encode())
-            sock.send(encrypted_msg)
+            send_msg(sock, encrypted_msg)
             print('...')
 
             # wait response
-            response = sock.recv(1024)
-            response_decrypted = fernet.decrypt(response)
-            print(f'server> {response_decrypted.decode()}')
+            try:
+                response = recv_msg(sock)
+            except ValueError as e:
+                print(f'- Protocol error: {e}')
+                break
+            if response is None:
+                print('- Server disconnected.')
+                break
+            try:
+                response_decrypted = fernet.decrypt(response)
+                print(f'server> {response_decrypted.decode()}')
+            except Exception as e:
+                print(f'- Decryption error: {e}')
+                break
+
+    except ConnectionRefusedError:
+        print(f'Connection refused by {host}:{port}. Is the server running?')
     except KeyboardInterrupt:
         print('Bye.')
-        sock.close()
+    except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError) as e:
+        print(f'- Connection error: {e}')
+    finally:
+        if sock:
+            sock.close()
 
 
 main()
