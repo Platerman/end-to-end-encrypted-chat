@@ -5,7 +5,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from base64 import urlsafe_b64encode
 
-from utils import send_msg, recv_msg, MAX_MESSAGE_SIZE
+from util import send_msg, recv_msg, MAX_MESSAGE_SIZE
 
 
 def main():
